@@ -1,0 +1,58 @@
+html {
+  background-color: black;
+}
+
+body {
+  width: 1024px;
+  margin: 0 auto;
+  background-color: darkgray;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.user-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: fit-content;
+}
+
+.user-name {
+  width: 120px;
+  overflow: hidden;
+}
+
+.user-connection {
+  width: 1rem;
+  height: 1rem;
+  background-color: green;
+  border-radius: 50%;
+}
+
+.user-ping {
+  font-style: italic;
+  width: 50px;
+}
+
+.user-bets {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.choices {
+  display: flex;
+  gap: 1rem;
+}
+
+.choices div {
+  background-color: blueviolet;
+  width: 2rem;
+  text-align: center;
+  border-radius: 8px;
+}

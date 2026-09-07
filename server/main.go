@@ -23,8 +23,19 @@ const (
 	Pess
 )
 
-type StateItem struct {
+// TODO: pull from env
+const password = "test"
+
+var invalidPasswordJson = []byte(`{"action":"invalidPassword"}`)
+var unknownIdJson = []byte(`{"action":"unknownId"}`)
+var nameDuplicateJson = []byte(`{"action":"nameDuplicate"}`)
+var serverError = []byte(`{"action":"serverError"}`)
+var invalidPayloadJson = []byte(`{"action":"invalidPayload"}`)
+
+type User struct {
 	id           string
+	broadcast    chan []byte
+	ctx          context.Context
 	conn         *websocket.Conn
 	Name         string    `json:"name"`
 	Connected    bool      `json:"connected"`
@@ -33,41 +44,112 @@ type StateItem struct {
 	Bets         [3]string `json:"bets"`
 }
 
-type State struct {
-	mu    sync.Mutex
-	items []StateItem
+func newUser(ctx context.Context, conn *websocket.Conn, name string) *User {
+	return &User{
+		id:           uuid.New().String(),
+		broadcast:    make(chan []byte, 10),
+		ctx:          ctx,
+		conn:         conn,
+		Name:         name,
+		Connected:    true,
+		NotAnswering: false,
+		Ping:         999,
+		Bets:         [3]string{"", "", ""},
+	}
 }
 
-func (s *State) hasId(id string) bool {
-	for _, user := range s.items {
+func (u *User) listen() {
+	for {
+		select {
+		case <-u.ctx.Done():
+			return
+
+		case msg, ok := <-u.broadcast:
+			if !ok {
+				return
+			}
+
+			ctx, cancel := context.WithTimeout(u.ctx, 5*time.Second)
+			err := u.conn.Write(ctx, websocket.MessageText, msg)
+			cancel()
+			if err != nil {
+				log.Println("write error:", err)
+				return
+			}
+		}
+	}
+}
+
+func (u *User) send(msg []byte) {
+	log.Printf("sending msg to user '%s' (%s): %s", u.Name, u.id, msg)
+	u.broadcast <- msg
+}
+
+func writeToSocket(ctx context.Context, conn *websocket.Conn, msg []byte) {
+	if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
+		log.Printf("write failed: %v", err)
+		return
+	}
+}
+
+func writeToUsers(users []*User, msg []byte) {
+	for _, user := range users {
+		if user.Connected {
+			user.send(msg)
+		}
+	}
+}
+
+type State struct {
+	mu    sync.Mutex
+	users []*User
+}
+
+func (s *State) getUserById(id string) *User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, user := range s.users {
 		if user.id == id {
+			return user
+		}
+	}
+
+	return nil
+}
+
+func (s *State) getUserByConn(conn *websocket.Conn) *User {
+	for _, user := range s.users {
+		if user.conn == conn {
+			return user
+		}
+	}
+	return nil
+}
+
+func (s *State) getSnapshotForInit() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	users := make([]User, 0, len(s.users))
+	for _, user := range s.users {
+		users = append(users, *user)
+	}
+	return json.Marshal(InitAnswer{Action: "init", Data: users})
+}
+
+func (s *State) hasName(name string) bool {
+	for _, user := range s.users {
+		if user.Name == name {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *State) getConnById(id string) *websocket.Conn {
-	for _, user := range s.items {
-		if user.id == id {
-			return user.conn
-		}
-	}
-	panic("user not found")
-}
-
-func (s *State) getNameById(id string) string {
-	for _, user := range s.items {
-		if user.id == id {
-			return user.Name
-		}
-	}
-	panic("user not found")
-}
-
 func newState() State {
 	return State{
-		items: []StateItem{},
+		users: []*User{},
 	}
 }
 
@@ -102,8 +184,8 @@ type NewUserAnswer struct {
 }
 
 type InitAnswer struct {
-	Action string      `json:"action"`
-	Data   []StateItem `json:"data"`
+	Action string `json:"action"`
+	Data   []User `json:"data"`
 }
 
 type VoteData struct {
@@ -117,54 +199,105 @@ type VoteAnswer struct {
 	Data   VoteData `json:"data"`
 }
 
-type UnknownIdAnswer struct {
+type DisconnectAnswer struct {
 	Action string `json:"action"`
+	Name   string `json:"name"`
 }
 
-// TODO: pull from env
-const password = "test"
+func handleLogin(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
+	var data LoginPayload
 
-func addUser(state *State, name, id string, conn *websocket.Conn) {
+	if err := json.Unmarshal(payload.Data, &data); err != nil {
+		log.Printf("unmarshal failed: %v", err)
+		writeToSocket(ctx, conn, invalidPayloadJson)
+		return
+	}
+
+	if data.Password != password {
+		writeToSocket(ctx, conn, invalidPasswordJson)
+		return
+	}
+
+	if state.hasName(data.Name) {
+		writeToSocket(ctx, conn, nameDuplicateJson)
+		return
+	}
+
+	user := newUser(ctx, conn, data.Name)
+	log.Printf("user '%s' (%s) listening to messages", user.Name, user.id)
+	go user.listen()
+
 	state.mu.Lock()
-	defer state.mu.Unlock()
+	state.users = append(state.users, user)
+	state.mu.Unlock()
 
-	// TODO: what if name already exists? -> send error
+	answer, err := json.Marshal(LoginAnswer{Action: "login", Uuid: user.id})
+	if err != nil {
+		log.Printf("marshal failed: %v", err)
+		writeToSocket(ctx, conn, serverError)
+		return
+	}
 
-	state.items = append(state.items, StateItem{
-		Name:      name,
-		Connected: true,
-		conn:      conn,
-		id:        id,
-	})
+	user.send(answer)
+
+	answer, err = json.Marshal(NewUserAnswer{Action: "newUser", Name: user.Name})
+	if err != nil {
+		log.Printf("marshal failed: %v", err)
+		writeToSocket(ctx, conn, serverError)
+		return
+	}
+
+	writeToUsers(state.users, answer)
 }
 
-func broadcastNewUser(r *http.Request, state *State, name, id string) {
-	loginAnswer, err := json.Marshal(LoginAnswer{Action: "login", Uuid: id})
-	if err != nil {
-		log.Printf("marshal failed: %v", err)
+func handleInit(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
+	var data InitPayload
+
+	if err := json.Unmarshal(payload.Data, &data); err != nil {
+		log.Printf("unmarshal failed: %v", err)
+		writeToSocket(ctx, conn, invalidPayloadJson)
 		return
 	}
 
-	ctx := r.Context()
-	conn := state.getConnById(id)
-
-	if err := conn.Write(ctx, websocket.MessageText, loginAnswer); err != nil {
-		log.Printf("write failed: %v", err)
-		return
-	}
-
-	newUserAnswer, err := json.Marshal(NewUserAnswer{Action: "newUser", Name: name})
-	if err != nil {
-		log.Printf("marshal failed: %v", err)
-		return
-	}
-
-	for _, user := range state.items {
-		if err := user.conn.Write(ctx, websocket.MessageText, newUserAnswer); err != nil {
-			log.Printf("write failed: %v", err)
+	if user := state.getUserById(data.Id); user != nil {
+		answer, err := state.getSnapshotForInit()
+		if err != nil {
+			log.Printf("marshal failed: %v", err)
+			writeToSocket(ctx, conn, serverError)
 			return
 		}
+		user.send(answer)
+		return
 	}
+
+	writeToSocket(ctx, conn, unknownIdJson)
+}
+
+func handleVote(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
+	var data VotePayload
+
+	if err := json.Unmarshal(payload.Data, &data); err != nil {
+		log.Printf("unmarshal failed: %v", err)
+		writeToSocket(ctx, conn, invalidPayloadJson)
+		return
+	}
+
+	if user := state.getUserById(data.Id); user != nil {
+		answer, err := json.Marshal(VoteAnswer{Action: "vote", Data: VoteData{
+			Value:    data.Value,
+			Category: data.Category,
+			Name:     user.Name,
+		}})
+		if err != nil {
+			log.Printf("marshal failed: %v", err)
+			writeToSocket(ctx, conn, serverError)
+			return
+		}
+		writeToUsers(state.users, answer)
+		return
+	}
+
+	writeToSocket(ctx, conn, unknownIdJson)
 }
 
 func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
@@ -183,97 +316,42 @@ func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
 		for {
 			_, msg, err := conn.Read(ctx)
 			if err != nil {
+				log.Printf("read failed: %v", err)
+
+				state.mu.Lock()
+
+				user := state.getUserByConn(conn)
+				if user == nil {
+					return
+				}
+
+				user.Connected = false
+
+				state.mu.Unlock()
+
+				answer, err := json.Marshal(DisconnectAnswer{Action: "disconnect", Name: user.Name})
+				if err != nil {
+					log.Printf("marshal failed: %v", err)
+				}
+
+				writeToUsers(state.users, answer)
 				return
 			}
 
 			var payload Payload
 			if err := json.Unmarshal(msg, &payload); err != nil {
 				log.Printf("unmarshal failed: %v", err)
+				writeToSocket(ctx, conn, serverError)
 				return
 			}
 
-			log.Printf("action: %s", payload.Action)
-
 			switch payload.Action {
 			case "login":
-				var data LoginPayload
-				if err := json.Unmarshal(payload.Data, &data); err != nil {
-					log.Printf("unmarshal failed: %v", err)
-					return
-				}
-
-				if data.Password != password {
-					if err := conn.Write(ctx, websocket.MessageText, []byte("login failed")); err != nil {
-						return
-					}
-				} else {
-					id := uuid.New().String()
-					addUser(state, data.Name, id, conn)
-					broadcastNewUser(r, state, data.Name, id)
-				}
+				handleLogin(state, ctx, conn, &payload)
 			case "init":
-				var data InitPayload
-				if err := json.Unmarshal(payload.Data, &data); err != nil {
-					log.Printf("unmarshal failed: %v", err)
-					return
-				}
-
-				if !state.hasId(data.Id) {
-					unknownIdAnswer, err := json.Marshal(UnknownIdAnswer{Action: "unknownId"})
-					if err != nil {
-						log.Printf("marshal failed: %v", err)
-						return
-					}
-
-					if err := conn.Write(ctx, websocket.MessageText, unknownIdAnswer); err != nil {
-						return
-					}
-				} else {
-					initAnswer, err := json.Marshal(InitAnswer{Action: "init", Data: state.items})
-					if err != nil {
-						log.Printf("marshal failed: %v", err)
-						return
-					}
-
-					if err := conn.Write(ctx, websocket.MessageText, initAnswer); err != nil {
-						return
-					}
-				}
+				handleInit(state, ctx, conn, &payload)
 			case "vote":
-				var data VotePayload
-				if err := json.Unmarshal(payload.Data, &data); err != nil {
-					log.Printf("unmarshal failed: %v", err)
-					return
-				}
-
-				if !state.hasId(data.Id) {
-					unknownIdAnswer, err := json.Marshal(UnknownIdAnswer{Action: "unknownId"})
-					if err != nil {
-						log.Printf("marshal failed: %v", err)
-						return
-					}
-
-					if err := conn.Write(ctx, websocket.MessageText, unknownIdAnswer); err != nil {
-						return
-					}
-				} else {
-					voteAnswer, err := json.Marshal(VoteAnswer{Action: "vote", Data: VoteData{
-						Value:    data.Value,
-						Category: data.Category,
-						Name:     state.getNameById(data.Id),
-					}})
-					if err != nil {
-						log.Printf("marshal failed: %v", err)
-						return
-					}
-
-					for _, user := range state.items {
-						if err := user.conn.Write(ctx, websocket.MessageText, voteAnswer); err != nil {
-							log.Printf("write failed: %v", err)
-							return
-						}
-					}
-				}
+				handleVote(state, ctx, conn, &payload)
 			}
 		}
 	}

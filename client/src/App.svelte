@@ -81,7 +81,7 @@
                             name: payload.name,
                             connected: true,
                             notAnswering: false,
-                            ping: 0,
+                            ping: 999,
                             bets: [null, null, null],
                         });
                         break;
@@ -97,6 +97,15 @@
                         if (!item) throw new Error("user not found");
                         item.bets[payload.data.category] = payload.data.value;
                         break;
+
+                    case "disconnect":
+                        console.log("disconnect", payload.name);
+                        const user = appState.find(
+                            (u) => u.name === payload.name,
+                        );
+                        if (user) user.connected = false;
+                        break;
+
                     case "unknownId":
                         console.log("unknown id");
                         showNewUserInput = true;
@@ -158,16 +167,18 @@
     <div id="app">
         <div id="overview">
             {#each appState as user}
-                <div class="user-container">
-                    <div class="user-connection"></div>
-                    <div class="user-ping">{user.ping}ms</div>
-                    <div class="user-name">{user.name}</div>
-                    <div class="user-bets">
-                        <Choice value={user.bets[0]} hidden={!showVotes} />
-                        <Choice value={user.bets[1]} hidden={!showVotes} />
-                        <Choice value={user.bets[2]} hidden={!showVotes} />
+                {#if user.connected}
+                    <div class="user-container">
+                        <div class="user-connection"></div>
+                        <div class="user-ping">{user.ping}ms</div>
+                        <div class="user-name">{user.name}</div>
+                        <div class="user-bets">
+                            <Choice value={user.bets[0]} hidden={!showVotes} />
+                            <Choice value={user.bets[1]} hidden={!showVotes} />
+                            <Choice value={user.bets[2]} hidden={!showVotes} />
+                        </div>
                     </div>
-                </div>
+                {/if}
             {/each}
         </div>
         <Choices name="Optimistic" {values} onClick={vote} />

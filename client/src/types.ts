@@ -12,6 +12,10 @@ export type Payload =
       data: AppState;
     }
   | {
+      action: "disconnect";
+      name: string;
+    }
+  | {
       action: "vote";
       data: {
         value: string;

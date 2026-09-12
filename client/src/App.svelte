@@ -1,9 +1,10 @@
 <script lang="ts">
     import Choices from "./lib/Choices.svelte";
     import Choice from "./lib/Choice.svelte";
-    import type { AppState, Category, Payload } from "./types";
+    import type { AppState, Category, Payload, User } from "./types";
 
     const values = [
+        "1",
         "2",
         "4",
         "6",
@@ -46,7 +47,7 @@
         const socket = new WebSocket("ws://localhost:8080");
 
         socket.onopen = () => {
-            const uuid = localStorage.getItem("uuid");
+            const uuid = getKey();
             if (uuid) {
                 socket.send(
                     JSON.stringify({ action: "init", data: { id: uuid } }),
@@ -66,7 +67,7 @@
                 switch (payload.action) {
                     case "login":
                         console.log("login successful", payload.uuid);
-                        localStorage.setItem("uuid", payload.uuid);
+                        setKey(payload.uuid);
                         showNewUserInput = false;
                         socket.send(
                             JSON.stringify({
@@ -85,6 +86,10 @@
                             bets: [null, null, null],
                         });
                         break;
+                    case "reconnect":
+                        console.log("reconnect", payload.name);
+                        updateUserByName(payload.name, "connected", true);
+                        break;
                     case "init":
                         console.log("init", payload.data);
                         appState = payload.data;
@@ -94,18 +99,36 @@
                         const item = appState.find(
                             (item) => item.name === payload.data.name,
                         );
-                        if (!item) throw new Error("user not found");
-                        item.bets[payload.data.category] = payload.data.value;
+                        if (item) {
+                            item.bets[payload.data.category] =
+                                payload.data.value;
+                        }
                         break;
-
                     case "disconnect":
                         console.log("disconnect", payload.name);
-                        const user = appState.find(
-                            (u) => u.name === payload.name,
-                        );
-                        if (user) user.connected = false;
+                        updateUserByName(payload.name, "connected", false);
                         break;
-
+                    case "ping":
+                        console.log("ping");
+                        socket.send(
+                            JSON.stringify({
+                                action: "pong",
+                                data: { id: getKey() },
+                            }),
+                        );
+                        break;
+                    case "pingUpdate":
+                        console.log("pingUpdate");
+                        updateUserByName(payload.name, "ping", payload.ping);
+                        break;
+                    case "reset":
+                        console.log("reset");
+                        for (const user of appState) {
+                            for (let i = 0; i < user.bets.length; i++) {
+                                user.bets[i] = null;
+                            }
+                        }
+                        break;
                     case "unknownId":
                         console.log("unknown id");
                         showNewUserInput = true;
@@ -122,6 +145,15 @@
             socket.close();
         };
     });
+
+    function updateUserByName<T extends keyof User>(
+        name: string,
+        field: T,
+        value: User[T],
+    ) {
+        const user = appState.find((u) => u.name === name);
+        if (user) user[field] = value;
+    }
 
     function login() {
         ws?.send(JSON.stringify({ action: "login", data: { name, password } }));
@@ -146,10 +178,22 @@
                 data: {
                     value,
                     category: categoryNumber,
-                    id: localStorage.getItem("uuid"),
+                    id: getKey(),
                 },
             }),
         );
+    }
+
+    function reset() {
+        ws?.send(JSON.stringify({ action: "reset", data: { id: getKey() } }));
+    }
+
+    function getKey() {
+        return localStorage.getItem("uuid");
+    }
+
+    function setKey(key: string) {
+        return localStorage.setItem("uuid", key);
     }
 </script>
 
@@ -165,8 +209,9 @@
     </div>
 {:else}
     <div id="app">
+        <button onclick={reset}>Reset</button>
         <div id="overview">
-            {#each appState as user}
+            {#each appState as user (user.name)}
                 {#if user.connected}
                     <div class="user-container">
                         <div class="user-connection"></div>

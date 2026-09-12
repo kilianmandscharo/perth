@@ -8,12 +8,27 @@ export type Payload =
       name: string;
     }
   | {
+      action: "reconnect";
+      name: string;
+    }
+  | {
       action: "init";
       data: AppState;
     }
   | {
       action: "disconnect";
       name: string;
+    }
+  | {
+      action: "ping";
+    }
+  | {
+      action: "pingUpdate";
+      name: string;
+      ping: number;
+    }
+  | {
+      action: "reset";
     }
   | {
       action: "vote";
@@ -27,12 +42,14 @@ export type Payload =
       action: "unknownId";
     };
 
-export type AppState = {
+export type User = {
   name: string;
   connected: boolean;
   notAnswering: boolean;
   ping: number;
   bets: [string | null, string | null, string | null];
-}[];
+};
+
+export type AppState = User[];
 
 export type Category = "Optimistic" | "Realistic" | "Pessimistic";

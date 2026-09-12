@@ -23,7 +23,13 @@ const (
 	Pess
 )
 
-// TODO: pull from env
+// TODO:
+// - pull pw from env
+// - pull origin from env
+// - check state mutex
+// - implement notAnswering
+// - when do disconnected users get removed?
+
 const password = "test"
 
 var invalidPasswordJson = []byte(`{"action":"invalidPassword"}`)
@@ -31,25 +37,27 @@ var unknownIdJson = []byte(`{"action":"unknownId"}`)
 var nameDuplicateJson = []byte(`{"action":"nameDuplicate"}`)
 var serverError = []byte(`{"action":"serverError"}`)
 var invalidPayloadJson = []byte(`{"action":"invalidPayload"}`)
+var pingJson = []byte(`{"action":"ping"}`)
+var resetJson = []byte(`{"action":"reset"}`)
 
 type User struct {
 	id           string
-	broadcast    chan []byte
 	ctx          context.Context
 	conn         *websocket.Conn
+	lastPing     time.Time
 	Name         string    `json:"name"`
 	Connected    bool      `json:"connected"`
 	NotAnswering bool      `json:"notAnswering"`
-	Ping         uint16    `json:"ping"`
+	Ping         int64     `json:"ping"`
 	Bets         [3]string `json:"bets"`
 }
 
-func newUser(ctx context.Context, conn *websocket.Conn, name string) *User {
+func newUser(conn *websocket.Conn, ctx context.Context, name string) *User {
 	return &User{
 		id:           uuid.New().String(),
-		broadcast:    make(chan []byte, 10),
 		ctx:          ctx,
 		conn:         conn,
+		lastPing:     time.Now(),
 		Name:         name,
 		Connected:    true,
 		NotAnswering: false,
@@ -58,51 +66,36 @@ func newUser(ctx context.Context, conn *websocket.Conn, name string) *User {
 	}
 }
 
-func (u *User) listen() {
-	for {
-		select {
-		case <-u.ctx.Done():
-			return
-
-		case msg, ok := <-u.broadcast:
-			if !ok {
-				return
-			}
-
-			ctx, cancel := context.WithTimeout(u.ctx, 5*time.Second)
-			err := u.conn.Write(ctx, websocket.MessageText, msg)
-			cancel()
-			if err != nil {
-				log.Println("write error:", err)
-				return
-			}
-		}
+func (u *User) send(broadcast chan Broadcast, msg []byte) {
+	broadcast <- Broadcast{
+		msg:  msg,
+		ctx:  u.ctx,
+		conn: u.conn,
 	}
 }
 
-func (u *User) send(msg []byte) {
-	log.Printf("sending msg to user '%s' (%s): %s", u.Name, u.id, msg)
-	u.broadcast <- msg
+func (u *User) disconnect() {
+	u.Connected = false
+	u.conn = nil
+	u.ctx = nil
 }
 
-func writeToSocket(ctx context.Context, conn *websocket.Conn, msg []byte) {
-	if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
-		log.Printf("write failed: %v", err)
-		return
-	}
-}
-
-func writeToUsers(users []*User, msg []byte) {
-	for _, user := range users {
-		if user.Connected {
-			user.send(msg)
-		}
-	}
+func (u *User) reconnect(conn *websocket.Conn, ctx context.Context) {
+	u.Connected = true
+	u.conn = conn
+	u.ctx = ctx
 }
 
 type State struct {
-	mu    sync.Mutex
-	users []*User
+	mu        sync.Mutex
+	users     []*User
+	broadcast chan Broadcast
+}
+
+func (s *State) addUser(user *User) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.users = append(s.users, user)
 }
 
 func (s *State) getUserById(id string) *User {
@@ -111,6 +104,19 @@ func (s *State) getUserById(id string) *User {
 
 	for _, user := range s.users {
 		if user.id == id {
+			return user
+		}
+	}
+
+	return nil
+}
+
+func (s *State) getUserByName(name string) *User {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, user := range s.users {
+		if user.Name == name {
 			return user
 		}
 	}
@@ -138,18 +144,55 @@ func (s *State) getSnapshotForInit() ([]byte, error) {
 	return json.Marshal(InitAnswer{Action: "init", Data: users})
 }
 
-func (s *State) hasName(name string) bool {
+func (s *State) reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	for _, user := range s.users {
-		if user.Name == name {
-			return true
+		for i := range user.Bets {
+			user.Bets[i] = ""
 		}
 	}
-	return false
 }
 
-func newState() State {
+func (s *State) removeByName(name string) {
+	users := make([]*User, 0)
+	for _, user := range s.users {
+		if user.Name != name {
+			users = append(users, user)
+		}
+	}
+}
+
+func (s *State) pingAll(now time.Time) {
+	for _, user := range s.users {
+		if user.Connected {
+			user.lastPing = now
+			user.send(s.broadcast, pingJson)
+		}
+	}
+}
+
+func (s *State) sendToAll(msg []byte) {
+	for _, user := range s.users {
+		if user.Connected {
+			user.send(s.broadcast, msg)
+		}
+	}
+}
+
+func (s *State) send(conn *websocket.Conn, ctx context.Context, msg []byte) {
+	s.broadcast <- Broadcast{
+		msg:  msg,
+		conn: conn,
+		ctx:  ctx,
+	}
+}
+
+func newState(broadcast chan Broadcast) State {
 	return State{
-		users: []*User{},
+		broadcast: broadcast,
+		users:     []*User{},
 	}
 }
 
@@ -167,6 +210,14 @@ type InitPayload struct {
 	Id string `json:"id"`
 }
 
+type ResetPayload struct {
+	Id string `json:"id"`
+}
+
+type PongPayload struct {
+	Id string `json:"id"`
+}
+
 type VotePayload struct {
 	Id       string   `json:"id"`
 	Value    string   `json:"value"`
@@ -179,6 +230,11 @@ type LoginAnswer struct {
 }
 
 type NewUserAnswer struct {
+	Action string `json:"action"`
+	Name   string `json:"name"`
+}
+
+type ReconnectAnswer struct {
 	Action string `json:"action"`
 	Name   string `json:"name"`
 }
@@ -204,50 +260,55 @@ type DisconnectAnswer struct {
 	Name   string `json:"name"`
 }
 
+type PingUpdateAnswer struct {
+	Action string `json:"action"`
+	Name   string `json:"name"`
+	Ping   int64  `json:"ping"`
+}
+
 func handleLogin(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
 	var data LoginPayload
 
 	if err := json.Unmarshal(payload.Data, &data); err != nil {
 		log.Printf("unmarshal failed: %v", err)
-		writeToSocket(ctx, conn, invalidPayloadJson)
+		state.send(conn, ctx, invalidPayloadJson)
 		return
 	}
 
 	if data.Password != password {
-		writeToSocket(ctx, conn, invalidPasswordJson)
+		state.send(conn, ctx, invalidPasswordJson)
 		return
 	}
 
-	if state.hasName(data.Name) {
-		writeToSocket(ctx, conn, nameDuplicateJson)
-		return
+	if user := state.getUserByName(data.Name); user != nil {
+		if !user.Connected {
+			state.removeByName(data.Name)
+		} else {
+			state.send(conn, ctx, nameDuplicateJson)
+			return
+		}
 	}
 
-	user := newUser(ctx, conn, data.Name)
-	log.Printf("user '%s' (%s) listening to messages", user.Name, user.id)
-	go user.listen()
-
-	state.mu.Lock()
-	state.users = append(state.users, user)
-	state.mu.Unlock()
+	user := newUser(conn, ctx, data.Name)
 
 	answer, err := json.Marshal(LoginAnswer{Action: "login", Uuid: user.id})
 	if err != nil {
 		log.Printf("marshal failed: %v", err)
-		writeToSocket(ctx, conn, serverError)
+		state.send(conn, ctx, serverError)
 		return
 	}
 
-	user.send(answer)
+	user.send(state.broadcast, answer)
 
 	answer, err = json.Marshal(NewUserAnswer{Action: "newUser", Name: user.Name})
 	if err != nil {
 		log.Printf("marshal failed: %v", err)
-		writeToSocket(ctx, conn, serverError)
+		state.send(conn, ctx, serverError)
 		return
 	}
 
-	writeToUsers(state.users, answer)
+	state.sendToAll(answer)
+	state.addUser(user)
 }
 
 func handleInit(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
@@ -255,22 +316,33 @@ func handleInit(state *State, ctx context.Context, conn *websocket.Conn, payload
 
 	if err := json.Unmarshal(payload.Data, &data); err != nil {
 		log.Printf("unmarshal failed: %v", err)
-		writeToSocket(ctx, conn, invalidPayloadJson)
+		state.send(conn, ctx, invalidPayloadJson)
 		return
 	}
 
 	if user := state.getUserById(data.Id); user != nil {
+		if !user.Connected {
+			answer, err := json.Marshal(ReconnectAnswer{Action: "reconnect", Name: user.Name})
+			if err != nil {
+				log.Printf("marshal failed: %v", err)
+				state.send(conn, ctx, serverError)
+				return
+			}
+			state.sendToAll(answer)
+			user.reconnect(conn, ctx)
+		}
+
 		answer, err := state.getSnapshotForInit()
 		if err != nil {
 			log.Printf("marshal failed: %v", err)
-			writeToSocket(ctx, conn, serverError)
+			state.send(conn, ctx, serverError)
 			return
 		}
-		user.send(answer)
+		user.send(state.broadcast, answer)
 		return
 	}
 
-	writeToSocket(ctx, conn, unknownIdJson)
+	state.send(conn, ctx, unknownIdJson)
 }
 
 func handleVote(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
@@ -278,7 +350,7 @@ func handleVote(state *State, ctx context.Context, conn *websocket.Conn, payload
 
 	if err := json.Unmarshal(payload.Data, &data); err != nil {
 		log.Printf("unmarshal failed: %v", err)
-		writeToSocket(ctx, conn, invalidPayloadJson)
+		state.send(conn, ctx, invalidPayloadJson)
 		return
 	}
 
@@ -290,14 +362,58 @@ func handleVote(state *State, ctx context.Context, conn *websocket.Conn, payload
 		}})
 		if err != nil {
 			log.Printf("marshal failed: %v", err)
-			writeToSocket(ctx, conn, serverError)
+			state.send(conn, ctx, serverError)
 			return
 		}
-		writeToUsers(state.users, answer)
+		state.sendToAll(answer)
 		return
 	}
 
-	writeToSocket(ctx, conn, unknownIdJson)
+	state.send(conn, ctx, unknownIdJson)
+}
+
+func handleReset(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
+	var data ResetPayload
+
+	if err := json.Unmarshal(payload.Data, &data); err != nil {
+		log.Printf("unmarshal failed: %v", err)
+		state.send(conn, ctx, invalidPayloadJson)
+		return
+	}
+
+	if user := state.getUserById(data.Id); user != nil {
+		state.reset()
+		state.sendToAll(resetJson)
+		return
+	}
+
+	state.send(conn, ctx, unknownIdJson)
+}
+
+func handlePong(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {
+	var data PongPayload
+
+	if err := json.Unmarshal(payload.Data, &data); err != nil {
+		log.Printf("unmarshal failed: %v", err)
+		state.send(conn, ctx, invalidPayloadJson)
+		return
+	}
+
+	if user := state.getUserById(data.Id); user != nil {
+		now := time.Now().UnixMilli()
+		diff := (now - user.lastPing.UnixMilli())
+		user.Ping = diff
+		answer, err := json.Marshal(PingUpdateAnswer{Action: "pingUpdate", Name: user.Name, Ping: diff})
+		if err != nil {
+			log.Printf("marshal failed: %v", err)
+			state.send(conn, ctx, serverError)
+			return
+		}
+		state.sendToAll(answer)
+		return
+	}
+
+	state.send(conn, ctx, unknownIdJson)
 }
 
 func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +426,8 @@ func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer conn.CloseNow()
+
+		log.Println("new connection established")
 
 		ctx := r.Context()
 
@@ -325,7 +443,7 @@ func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 
-				user.Connected = false
+				user.disconnect()
 
 				state.mu.Unlock()
 
@@ -334,14 +452,16 @@ func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
 					log.Printf("marshal failed: %v", err)
 				}
 
-				writeToUsers(state.users, answer)
+				state.sendToAll(answer)
 				return
 			}
+
+			log.Println("received message:", string(msg))
 
 			var payload Payload
 			if err := json.Unmarshal(msg, &payload); err != nil {
 				log.Printf("unmarshal failed: %v", err)
-				writeToSocket(ctx, conn, serverError)
+				state.send(conn, ctx, serverError)
 				return
 			}
 
@@ -352,9 +472,25 @@ func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
 				handleInit(state, ctx, conn, &payload)
 			case "vote":
 				handleVote(state, ctx, conn, &payload)
+			case "reset":
+				handleReset(state, ctx, conn, &payload)
+			case "pong":
+				handlePong(state, ctx, conn, &payload)
 			}
 		}
 	}
+}
+
+const (
+	numberOfBroadcastRoutines = 3
+	pingIntervalInSeconds     = 5
+	messageTimeoutInSeconds   = 5
+)
+
+type Broadcast struct {
+	msg  []byte
+	conn *websocket.Conn
+	ctx  context.Context
 }
 
 func main() {
@@ -363,12 +499,50 @@ func main() {
 	)
 	defer stop()
 
-	state := newState()
+	// ticker := time.NewTicker(pingIntervalInSeconds * time.Second)
+	broadcast := make(chan Broadcast)
+	state := newState(broadcast)
 
 	srv := &http.Server{
 		Addr:    ":8080",
 		Handler: http.HandlerFunc(handler(&state)),
 	}
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+				// case t := <-ticker.C:
+				// 	state.pingAll(t)
+			}
+		}
+	}()
+
+	for i := 0; i < numberOfBroadcastRoutines; i++ {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case b, ok := <-broadcast:
+					if !ok {
+						return
+					}
+					ctx, cancel := context.WithTimeout(b.ctx, messageTimeoutInSeconds*time.Second)
+					log.Println("sending message:", string(b.msg))
+					err := b.conn.Write(ctx, websocket.MessageText, b.msg)
+					cancel()
+					if err != nil {
+						log.Println("write error:", err)
+						return
+					}
+				}
+			}
+		}()
+	}
+
+	log.Println("listening on port 8080...")
 
 	go func() {
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {

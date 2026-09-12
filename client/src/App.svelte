@@ -1,6 +1,6 @@
 <script lang="ts">
     import Choices from "./lib/Choices.svelte";
-    import Choice from "./lib/Choice.svelte";
+    import Vote from "./lib/Vote.svelte";
     import type { AppState, Category, Payload, User } from "./types";
 
     const values = [
@@ -43,14 +43,30 @@
             .every((user) => user.bets.every((bet) => !!bet)),
     );
 
-    /*
-    actions:
-    - login, send name, password, receive uuid
-    - init, send uuid, receive state
-    - vote, send uuid, receive update
-    - pong, send uuid, receive nothing
-    - restart, send uuid, receive update
-    */
+    let results: {
+        opti: number;
+        real: number;
+        pess: number;
+        pert: number;
+        sd: number;
+    } | null = $derived(
+        (() => {
+            const opti = getAverage(0);
+            const real = getAverage(1);
+            const pess = getAverage(2);
+            const pert = getPert(opti, real, pess);
+            const sd = getSd(opti, pess);
+            return showVotes
+                ? {
+                      opti,
+                      real,
+                      pess,
+                      pert,
+                      sd,
+                  }
+                : null;
+        })(),
+    );
 
     $effect(() => {
         console.log("connecting socket...");
@@ -232,6 +248,33 @@
             notifications = notifications.filter((n) => n.id !== id);
         }, 3000);
     }
+
+    function handleKeyDownOnLanding(e: KeyboardEvent) {
+        if (e.key === "Enter") {
+            login();
+        }
+    }
+
+    function getAverage(pos: number) {
+        const users = appState.filter((u) => u.connected);
+        const nums = users
+            .map((u) => {
+                const val = u.bets[pos];
+                if (val === null || val === "?") return null;
+                const num = parseInt(val, 10);
+                return num;
+            })
+            .filter(Boolean) as number[];
+        return nums.reduce((acc, num) => acc + num, 0) / nums.length;
+    }
+
+    function getPert(opti: number, real: number, pess: number) {
+        return (opti + 4 * real + pess) / 6;
+    }
+
+    function getSd(opti: number, pess: number) {
+        return (pess - opti) / 6;
+    }
 </script>
 
 {#if loading}
@@ -249,6 +292,7 @@
                     id="name-input"
                     class={nameDuplicate ? "error" : ""}
                     bind:value={name}
+                    onkeydown={handleKeyDownOnLanding}
                 />
             </div>
             <div>
@@ -258,6 +302,7 @@
                     class={invalidPassword ? "error" : ""}
                     bind:value={password}
                     type="password"
+                    onkeydown={handleKeyDownOnLanding}
                 />
             </div>
             <button
@@ -274,21 +319,57 @@
             {#each appState as user (user.name)}
                 {#if user.connected}
                     <div class="user-container">
-                        <div class="user-connection"></div>
-                        <div class="user-ping">{user.ping}ms</div>
-                        <div class="user-name">{user.name}</div>
-                        <div class="user-bets">
-                            <Choice value={user.bets[0]} hidden={!showVotes} />
-                            <Choice value={user.bets[1]} hidden={!showVotes} />
-                            <Choice value={user.bets[2]} hidden={!showVotes} />
+                        <div class="info">
+                            <div class="connection"></div>
+                            <div class="ping">{user.ping}ms</div>
+                            <div class="name">{user.name}</div>
+                        </div>
+                        <div class="user-votes">
+                            <Vote value={user.bets[0]} hidden={!showVotes} />
+                            <Vote value={user.bets[1]} hidden={!showVotes} />
+                            <Vote value={user.bets[2]} hidden={!showVotes} />
                         </div>
                     </div>
                 {/if}
             {/each}
         </div>
-        <Choices name="Optimistic" {values} onClick={vote} />
-        <Choices name="Realistic" {values} onClick={vote} />
-        <Choices name="Pessimistic" {values} onClick={vote} />
+        {#if showVotes}
+            <div id="results">
+                <div>
+                    Opti -> {results?.opti}
+                </div>
+                <div>
+                    Real -> {results?.real}
+                </div>
+                <div>
+                    Pess -> {results?.pess}
+                </div>
+                <div>
+                    PERT -> {results?.pert}
+                </div>
+                <div>
+                    Standard Deviation -> {results?.sd}
+                </div>
+            </div>
+        {/if}
+        <Choices
+            name="Optimistic"
+            {values}
+            onClick={vote}
+            disabled={showVotes}
+        />
+        <Choices
+            name="Realistic"
+            {values}
+            onClick={vote}
+            disabled={showVotes}
+        />
+        <Choices
+            name="Pessimistic"
+            {values}
+            onClick={vote}
+            disabled={showVotes}
+        />
     </div>
 {/if}
 

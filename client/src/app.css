@@ -70,7 +70,7 @@ body {
   outline: solid 2px red;
 }
 
-#login > button {
+button {
   border: none;
   width: 120px;
   align-self: flex-end;
@@ -81,21 +81,24 @@ body {
   cursor: pointer;
   text-align: center;
   box-shadow: 4px 4px 6px 2px #131024;
-  align-self: center;
-  margin-top: 8px;
 }
 
-#login > button:hover {
+button:hover {
   opacity: 80%;
 }
 
-#login > button:disabled {
+button:disabled {
   opacity: 40%;
 }
 
-#login > button:active:not(:disabled()) {
+button:active:not(:disabled) {
   transform: translate(2px, 2px);
   box-shadow: 2px 2px 6px 2px #131024;
+}
+
+#login > button {
+  align-self: center;
+  margin-top: 8px;
 }
 
 #app {
@@ -104,7 +107,22 @@ body {
   gap: 2rem;
 }
 
+#overview {
+  width: 100%;
+}
+
 .user-container {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-radius: 4px;
+  padding: 0.5rem;
+  height: 2rem;
+}
+
+.user-container .info {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -112,26 +130,40 @@ body {
   width: fit-content;
 }
 
-.user-name {
+.user-container .info .name {
   width: 120px;
   overflow: hidden;
 }
 
-.user-connection {
+.user-container .info .connection {
   width: 1rem;
   height: 1rem;
   background-color: green;
   border-radius: 50%;
 }
 
-.user-ping {
+.user-container .info .ping {
   font-style: italic;
   width: 50px;
 }
 
-.user-bets {
+.user-votes {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
+}
+
+.user-votes .vote {
+  width: 2rem;
+}
+
+.user-votes .vote div {
+  text-align: right;
+}
+
+.choice-block {
+  display: flex;
+  flex-direction: column;
   gap: 0.25rem;
 }
 
@@ -145,4 +177,9 @@ body {
   width: 2rem;
   text-align: center;
   border-radius: 8px;
+}
+
+#results {
+  display: flex;
+  flex-direction: column;
 }

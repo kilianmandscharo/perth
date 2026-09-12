@@ -5,18 +5,22 @@
         name,
         values,
         onClick,
+        disabled,
     }: {
         name: Category;
         values: string[];
         onClick: (value: string, category: Category) => void;
+        disabled: boolean;
     } = $props();
 </script>
 
 <div class="choice-block">
-    <div>{name}</div>
+    <div class="choice-type">{name}</div>
     <div class="choices">
         {#each values as value}
-            <button onclick={() => onClick(value, name)}>{value}</button>
+            <button {disabled} onclick={() => onClick(value, name)}
+                >{value}</button
+            >
         {/each}
     </div>
 </div>

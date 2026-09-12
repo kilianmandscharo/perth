@@ -436,16 +436,12 @@ func handler(state *State) func(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				log.Printf("read failed: %v", err)
 
-				state.mu.Lock()
-
 				user := state.getUserByConn(conn)
 				if user == nil {
 					return
 				}
 
 				user.disconnect()
-
-				state.mu.Unlock()
 
 				answer, err := json.Marshal(DisconnectAnswer{Action: "disconnect", Name: user.Name})
 				if err != nil {

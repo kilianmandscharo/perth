@@ -26,10 +26,21 @@
     let password = $state("");
     let name = $state("");
 
+    let invalidPassword = $state(false);
+    let nameDuplicate = $state(false);
+
+    let notifications: {
+        level: "success" | "error";
+        msg: string;
+        id: string;
+    }[] = $state([]);
+
     let appState: AppState = $state([]);
 
     let showVotes = $derived(
-        appState.every((item) => item.bets.every((bet) => !!bet)),
+        appState
+            .filter((user) => user.connected)
+            .every((user) => user.bets.every((bet) => !!bet)),
     );
 
     /*
@@ -107,6 +118,20 @@
                     case "disconnect":
                         console.log("disconnect", payload.name);
                         updateUserByName(payload.name, "connected", false);
+                        break;
+                    case "invalidPassword":
+                        invalidPassword = true;
+                        setTimeout(() => {
+                            invalidPassword = false;
+                        }, 3000);
+                        notify("Invalid Password", "error");
+                        break;
+                    case "nameDuplicate":
+                        nameDuplicate = true;
+                        setTimeout(() => {
+                            nameDuplicate = false;
+                        }, 3000);
+                        notify("Name already exists", "error");
                         break;
                     case "ping":
                         console.log("ping");
@@ -195,17 +220,52 @@
     function setKey(key: string) {
         return localStorage.setItem("uuid", key);
     }
+
+    function notify(msg: string, level: "error" | "success") {
+        const id = self.crypto.randomUUID();
+        notifications.push({
+            id,
+            msg,
+            level,
+        });
+        setTimeout(() => {
+            notifications = notifications.filter((n) => n.id !== id);
+        }, 3000);
+    }
 </script>
 
 {#if loading}
     <div>Loading...</div>
 {:else if showNewUserInput}
-    <div>
-        <label for="name-input">Please enter your name:</label>
-        <input id="name-input" bind:value={name} />
-        <label for="password-input">Please enter the password:</label>
-        <input id="password-input" bind:value={password} />
-        <button onclick={login}>Submit</button>
+    <div id="landing-page">
+        <div id="welcome">
+            <div class="above">Welcome to</div>
+            <div class="below">Perth</div>
+        </div>
+        <div id="login">
+            <div>
+                <label for="name-input">Your name</label>
+                <input
+                    id="name-input"
+                    class={nameDuplicate ? "error" : ""}
+                    bind:value={name}
+                />
+            </div>
+            <div>
+                <label for="password-input">The server password</label>
+                <input
+                    id="password-input"
+                    class={invalidPassword ? "error" : ""}
+                    bind:value={password}
+                    type="password"
+                />
+            </div>
+            <button
+                onclick={login}
+                disabled={password.length === 0 || name.length === 0}
+                >Submit</button
+            >
+        </div>
     </div>
 {:else}
     <div id="app">
@@ -229,5 +289,15 @@
         <Choices name="Optimistic" {values} onClick={vote} />
         <Choices name="Realistic" {values} onClick={vote} />
         <Choices name="Pessimistic" {values} onClick={vote} />
+    </div>
+{/if}
+
+{#if notifications.length > 0}
+    <div id="notifications">
+        {#each notifications as notification (notification.id)}
+            <div id="notification" class={notification.level}>
+                {notification.msg}
+            </div>
+        {/each}
     </div>
 {/if}

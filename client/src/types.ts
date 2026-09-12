@@ -23,6 +23,12 @@ export type Payload =
       action: "ping";
     }
   | {
+      action: "invalidPassword";
+    }
+  | {
+      action: "nameDuplicate";
+    }
+  | {
       action: "pingUpdate";
       name: string;
       ping: number;

@@ -1,11 +1,101 @@
 html {
-  background-color: black;
+  background-color: #404e7c;
+  color: beige;
+  font-family: monospace;
+  font-size: 14px;
 }
 
 body {
-  width: 1024px;
+  min-width: 256px;
+  max-width: 1024px;
   margin: 0 auto;
-  background-color: darkgray;
+  padding: 1rem;
+}
+
+#landing-page {
+  display: flex;
+  justify-content: space-between;
+}
+
+#welcome .above {
+  font-size: 1.5rem;
+}
+
+#welcome .below {
+  font-size: 6rem;
+}
+
+#notifications {
+  position: absolute;
+  right: 1rem;
+  bottom: 1rem;
+  gap: 0.25rem;
+  display: flex;
+  flex-direction: column;
+}
+
+#notification {
+  padding: 2rem;
+  border-radius: 8px;
+}
+
+#notification.success {
+  background-color: #71b48d;
+}
+
+#notification.error {
+  background-color: #260f26;
+}
+
+#login {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+#login > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+#login input {
+  border-radius: 4px;
+  height: 1.5rem;
+}
+
+#login input.error {
+  outline: solid 2px red;
+}
+
+#login > button {
+  border: none;
+  width: 120px;
+  align-self: flex-end;
+  height: 2rem;
+  border-radius: 4px;
+  background-color: #251f47;
+  color: beige;
+  cursor: pointer;
+  text-align: center;
+  box-shadow: 4px 4px 6px 2px #131024;
+  align-self: center;
+  margin-top: 8px;
+}
+
+#login > button:hover {
+  opacity: 80%;
+}
+
+#login > button:disabled {
+  opacity: 40%;
+}
+
+#login > button:active:not(:disabled()) {
+  transform: translate(2px, 2px);
+  box-shadow: 2px 2px 6px 2px #131024;
 }
 
 #app {

@@ -132,7 +132,7 @@ func (s *State) resetVotes() {
 }
 
 func (s *State) removeUserByName(name string) {
-	users := make([]*User, 0)
+	var users []*User
 	for _, user := range s.users {
 		if user.Name != name {
 			users = append(users, user)
@@ -142,7 +142,7 @@ func (s *State) removeUserByName(name string) {
 }
 
 func (s *State) checkUserTimeout(now time.Time) []string {
-	timedOut := make([]string, 0)
+	var timedOut []string
 	for _, user := range s.users {
 		if !user.Connected || user.answered {
 			continue
@@ -166,7 +166,7 @@ func (s *State) setLastPingForAll(now time.Time) {
 }
 
 func (s *State) getMessagesExceptFor(exception *User, msg []byte) []Message {
-	messages := make([]Message, 0)
+	var messages []Message
 	for _, user := range s.users {
 		if user.Connected && user != exception {
 			messages = append(messages, Message{

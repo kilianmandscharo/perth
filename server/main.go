@@ -319,7 +319,7 @@ func main() {
 				timedOutUsers := state.checkUserTimeout(t)
 				pingMessages := state.getMessages(pingJson)
 
-				disconnectMessages := make([]Message, 0)
+				var disconnectMessages []Message
 				for _, name := range timedOutUsers {
 					notification, err := disconnectNotificationJson(name)
 					if err != nil {

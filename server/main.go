@@ -32,7 +32,6 @@ const password = "test"
 // TODO:
 // - pull pw from env
 // - pull origin from env
-// - implement notAnswering
 // - when do disconnected users get removed?
 
 func handleLogin(state *State, ctx context.Context, conn *websocket.Conn, payload *Payload) {

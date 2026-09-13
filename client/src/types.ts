@@ -49,9 +49,8 @@ export type Payload =
 export type User = {
   name: string;
   connected: boolean;
-  notAnswering: boolean;
   ping: number;
-  bets: [string | null, string | null, string | null];
+  votes: [string | null, string | null, string | null];
 };
 
 export type AppState = User[];

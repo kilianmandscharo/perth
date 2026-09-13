@@ -24,6 +24,7 @@ const (
 	numberOfBroadcastRoutines = 3
 	pingIntervalInSeconds     = 5
 	messageTimeoutInSeconds   = 5
+	userTimeoutInSeconds      = 15
 )
 
 const password = "test"
@@ -31,7 +32,6 @@ const password = "test"
 // TODO:
 // - pull pw from env
 // - pull origin from env
-// - check state mutex
 // - implement notAnswering
 // - when do disconnected users get removed?
 
@@ -206,7 +206,9 @@ func handlePong(state *State, ctx context.Context, conn *websocket.Conn, payload
 		return
 	}
 
-	user.Ping = time.Now().UnixMilli() - user.lastPing.UnixMilli()
+	now := time.Now()
+	user.Ping = now.Sub(user.lastPing).Milliseconds()
+	user.answered = true
 
 	notification, err := pingUpdateNotificationJson(user.Name, user.Ping)
 	if err != nil {
@@ -312,10 +314,24 @@ func main() {
 				return
 			case t := <-ticker.C:
 				state.mu.Lock()
+
 				state.setLastPingForAll(t)
-				messages := state.getMessages(pingJson)
+				timedOutUsers := state.checkUserTimeout(t)
+				pingMessages := state.getMessages(pingJson)
+
+				disconnectMessages := make([]Message, 0)
+				for _, name := range timedOutUsers {
+					notification, err := disconnectNotificationJson(name)
+					if err != nil {
+						continue
+					}
+					disconnectMessages = append(disconnectMessages, state.getMessages(notification)...)
+				}
+
 				state.mu.Unlock()
-				state.sendMessages(messages)
+
+				state.sendMessages(disconnectMessages)
+				state.sendMessages(pingMessages)
 			}
 		}
 	}()
@@ -336,7 +352,7 @@ func main() {
 					cancel()
 					if err != nil {
 						log.Println("write error:", err)
-						return
+						continue
 					}
 				}
 			}

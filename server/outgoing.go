@@ -32,6 +32,8 @@ const (
 	ActionInvalidPayload  = "invalidPayload"
 	ActionPing            = "ping"
 	ActionReset           = "reset"
+	ActionNotAnswering    = "notAnswering"
+	ActionAnswering       = "answering"
 )
 
 var (
@@ -86,6 +88,14 @@ func disconnectNotificationJson(name string) ([]byte, error) {
 
 func reconnectNotificationJson(name string) ([]byte, error) {
 	return marshalJson(NameNotification{Action: ActionReconnect, Name: name})
+}
+
+func notAnsweringNotificationJson(name string) ([]byte, error) {
+	return marshalJson(NameNotification{Action: ActionNotAnswering, Name: name})
+}
+
+func answeringNotificationJson(name string) ([]byte, error) {
+	return marshalJson(NameNotification{Action: ActionAnswering, Name: name})
 }
 
 type VoteNotification struct {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 	"uuid"
@@ -16,28 +17,28 @@ type Message struct {
 }
 
 type User struct {
-	id           string
-	ctx          context.Context
-	conn         *websocket.Conn
-	lastPing     time.Time
-	Name         string    `json:"name"`
-	Connected    bool      `json:"connected"`
-	NotAnswering bool      `json:"notAnswering"`
-	Ping         int64     `json:"ping"`
-	Votes        [3]string `json:"votes"`
+	id        string
+	ctx       context.Context
+	conn      *websocket.Conn
+	lastPing  time.Time
+	answered  bool
+	Name      string    `json:"name"`
+	Connected bool      `json:"connected"`
+	Ping      int64     `json:"ping"`
+	Votes     [3]string `json:"votes"`
 }
 
 func newUser(conn *websocket.Conn, ctx context.Context, name string) *User {
 	return &User{
-		id:           uuid.New().String(),
-		ctx:          ctx,
-		conn:         conn,
-		lastPing:     time.Now(),
-		Name:         name,
-		Connected:    true,
-		NotAnswering: false,
-		Ping:         999,
-		Votes:        [3]string{"", "", ""},
+		id:        uuid.New().String(),
+		ctx:       ctx,
+		conn:      conn,
+		lastPing:  time.Time{},
+		answered:  true,
+		Name:      name,
+		Connected: true,
+		Ping:      999,
+		Votes:     [3]string{"", "", ""},
 	}
 }
 
@@ -50,8 +51,16 @@ func (u *User) send(broadcast chan Message, msg []byte) {
 }
 
 func (u *User) disconnect() {
+	log.Println("disconnecting user", u.Name)
+
+	if u.conn != nil {
+		if err := u.conn.CloseNow(); err != nil {
+			log.Println("could not close connection", err)
+		}
+		u.conn = nil
+	}
+
 	u.Connected = false
-	u.conn = nil
 	u.ctx = nil
 }
 
@@ -59,6 +68,7 @@ func (u *User) reconnect(conn *websocket.Conn, ctx context.Context) {
 	u.Connected = true
 	u.conn = conn
 	u.ctx = ctx
+	u.answered = true
 }
 
 type State struct {
@@ -128,13 +138,30 @@ func (s *State) removeUserByName(name string) {
 			users = append(users, user)
 		}
 	}
+	s.users = users
+}
+
+func (s *State) checkUserTimeout(now time.Time) []string {
+	timedOut := make([]string, 0)
+	for _, user := range s.users {
+		if !user.Connected || user.answered {
+			continue
+		}
+		if now.Sub(user.lastPing) > time.Duration(userTimeoutInSeconds)*time.Second {
+			user.disconnect()
+			timedOut = append(timedOut, user.Name)
+		}
+	}
+	return timedOut
 }
 
 func (s *State) setLastPingForAll(now time.Time) {
 	for _, user := range s.users {
-		if user.Connected {
-			user.lastPing = now
+		if !user.Connected || !user.answered {
+			continue
 		}
+		user.lastPing = now
+		user.answered = false
 	}
 }
 

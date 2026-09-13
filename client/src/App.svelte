@@ -40,7 +40,7 @@
     let showVotes = $derived(
         appState
             .filter((user) => user.connected)
-            .every((user) => user.bets.every((bet) => !!bet)),
+            .every((user) => user.votes.every((vote) => !!vote)),
     );
 
     let results: {
@@ -105,13 +105,23 @@
                         break;
                     case "newUser":
                         console.log("new user", payload.name);
-                        appState.push({
+
+                        const newUser: User = {
                             name: payload.name,
                             connected: true,
-                            notAnswering: false,
                             ping: 999,
-                            bets: [null, null, null],
-                        });
+                            votes: [null, null, null],
+                        };
+
+                        const index = appState.findIndex(
+                            (u) => u.name === payload.name,
+                        );
+
+                        if (index > -1) {
+                            appState[index] = newUser;
+                        } else {
+                            appState.push(newUser);
+                        }
                         break;
                     case "reconnect":
                         console.log("reconnect", payload.name);
@@ -127,7 +137,7 @@
                             (item) => item.name === payload.name,
                         );
                         if (item) {
-                            item.bets[payload.category] = payload.value;
+                            item.votes[payload.category] = payload.value;
                         }
                         break;
                     case "disconnect":
@@ -164,8 +174,8 @@
                     case "reset":
                         console.log("reset");
                         for (const user of appState) {
-                            for (let i = 0; i < user.bets.length; i++) {
-                                user.bets[i] = null;
+                            for (let i = 0; i < user.votes.length; i++) {
+                                user.votes[i] = null;
                             }
                         }
                         break;
@@ -258,7 +268,7 @@
         const users = appState.filter((u) => u.connected);
         const nums = users
             .map((u) => {
-                const val = u.bets[pos];
+                const val = u.votes[pos];
                 if (val === null || val === "?") return null;
                 const num = parseInt(val, 10);
                 return num;
@@ -320,13 +330,15 @@
                     <div class="user-container">
                         <div class="info">
                             <div class="connection"></div>
-                            <div class="ping">{user.ping}ms</div>
+                            <div class="ping">
+                                {user.ping === 999 ? "?" : user.ping}ms
+                            </div>
                             <div class="name">{user.name}</div>
                         </div>
                         <div class="user-votes">
-                            <Vote value={user.bets[0]} hidden={!showVotes} />
-                            <Vote value={user.bets[1]} hidden={!showVotes} />
-                            <Vote value={user.bets[2]} hidden={!showVotes} />
+                            <Vote value={user.votes[0]} hidden={!showVotes} />
+                            <Vote value={user.votes[1]} hidden={!showVotes} />
+                            <Vote value={user.votes[2]} hidden={!showVotes} />
                         </div>
                     </div>
                 {/if}

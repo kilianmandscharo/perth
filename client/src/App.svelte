@@ -122,13 +122,12 @@
                         appState = payload.data;
                         break;
                     case "vote":
-                        console.log("vote", payload.data);
+                        console.log("vote", payload);
                         const item = appState.find(
-                            (item) => item.name === payload.data.name,
+                            (item) => item.name === payload.name,
                         );
                         if (item) {
-                            item.bets[payload.data.category] =
-                                payload.data.value;
+                            item.bets[payload.category] = payload.value;
                         }
                         break;
                     case "disconnect":

@@ -38,11 +38,9 @@ export type Payload =
     }
   | {
       action: "vote";
-      data: {
-        value: string;
-        category: number;
-        name: string;
-      };
+      value: string;
+      category: number;
+      name: string;
     }
   | {
       action: "unknownId";
